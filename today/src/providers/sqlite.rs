@@ -5,9 +5,9 @@ use chrono::NaiveDate;
 use sqlite::{Connection, State};
 
 use crate::EventProvider;
-use crate::providers::EventProviderError;
 use crate::events::{Category, Event};
 use crate::filters::EventFilter;
+use crate::providers::EventProviderError;
 
 fn make_date_part(filter: &EventFilter) -> String {
     if let Some(month_day) = filter.month_day() {
@@ -20,7 +20,7 @@ fn make_date_part(filter: &EventFilter) -> String {
 fn make_category_part(filter: &EventFilter, category_map: &HashMap<i64, Category>) -> String {
     if let Some(filter_category) = filter.category() {
         let mut filter_category_id: Option<i64> = None;
-        
+
         // Brute force search for maching category:
         for (category_id, category) in category_map {
             if *category == filter_category {
@@ -28,7 +28,7 @@ fn make_category_part(filter: &EventFilter, category_map: &HashMap<i64, Category
                 break;
             }
         }
-        
+
         match filter_category_id {
             Some(id) => format!("category_id = {}", id),
             None => "".to_string(),
@@ -46,33 +46,50 @@ fn make_text_part(filter: &EventFilter) -> String {
     }
 }
 
-fn make_where_clause(filter: &EventFilter, category_map: &HashMap<i64, Category>) -> Result<String, ()> {
+fn make_where_clause(
+    filter: &EventFilter,
+    category_map: &HashMap<i64, Category>,
+) -> Result<String, ()> {
     let mut parts: Vec<String> = Vec::new();
-    
+
     if filter.contains_month_day() {
         parts.push(make_date_part(filter));
     }
-    
+
     if filter.contains_category() {
         let category_part = make_category_part(filter, category_map);
         if category_part != "" {
             parts.push(category_part);
         } else {
-            return Err(())
+            return Err(());
         }
     }
-    
+
     if filter.contains_text() {
         parts.push(make_text_part(filter));
     }
-    
+
     let mut result = "".to_string();
     if !parts.is_empty() {
         result.push_str("WHERE ");
         result.push_str(&parts.join(" AND "));
     }
-    
+
     Ok(result)
+}
+
+fn category_exists(
+    category_map: &HashMap<i64, Category>,
+    category: &Category,
+    id: &mut i64,
+) -> bool {
+    for (_category_id, category_iterator) in category_map {
+        if category_iterator == category {
+            *id = *_category_id;
+            return true;
+        }
+    }
+    false
 }
 
 pub struct SQLiteProvider {
@@ -125,10 +142,11 @@ impl EventProvider for SQLiteProvider {
                 return;
             }
         };
-        let mut event_query: String = "SELECT event_date, event_description, category_id FROM event".to_string();
+        let mut event_query: String =
+            "SELECT event_date, event_description, category_id FROM event".to_string();
         event_query.push(' '); // space between table name and WHERE clause
         event_query.push_str(&where_clause);
-        
+
         let mut statement = connection.prepare(event_query).unwrap();
         while let Ok(State::Row) = statement.next() {
             let date_string = statement.read::<String, _>("event_date").unwrap();
@@ -145,10 +163,47 @@ impl EventProvider for SQLiteProvider {
     }
 
     fn is_add_supported(&self) -> bool {
-        false
+        true
     }
 
     fn add_event(&self, _event: &Event) -> Result<(), EventProviderError> {
-        Err(EventProviderError::OperationNotSupported)
+        if !self.is_add_supported() {
+            return Err(EventProviderError::OperationNotSupported);
+        }
+        let connection = Connection::open(self.path.clone()).unwrap();
+        let category_map = self.get_categories(&connection);
+        let category = _event.category();
+
+        let mut category_id: i64 = 0;
+        if !category_exists(&category_map, &category, &mut category_id) {
+            let primary = category.primary();
+            let mut secondary = category.secondary().to_string();
+
+            if secondary.is_empty() {
+                secondary = "NULL".to_string();
+            }
+
+            let query = format!(
+                "INSERT INTO category (primary_name, secondary_name)
+                VALUES ('{}', '{}')
+                RETURNING category_id",
+                primary, secondary
+            );
+
+            let mut statement = connection.prepare(&query).unwrap();
+            statement.next().unwrap();
+            category_id = statement.read::<i64, _>("category_id").unwrap();
+        }
+
+        let date = _event.date_string();
+        let description = _event.description();
+        let query = format!(
+            "INSERT INTO event (event_date, event_description, category_id)
+            VALUES ('{}', '{}', {})",
+            date, description, category_id
+        );
+
+        connection.execute(query).unwrap();
+        Ok(())
     }
 }

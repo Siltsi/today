@@ -89,6 +89,15 @@ impl Category {
             }
         }
     }
+    pub fn primary(&self) -> String {
+        return self.primary.clone();
+    }
+    pub fn secondary(&self) -> String {
+        match &self.secondary {
+            Some(sec) => sec.clone(),
+            None => "".to_string(),
+        }
+    }
 }
 
 impl fmt::Display for Category {
@@ -143,6 +152,14 @@ impl Event {
 
     pub fn kind(&self) -> EventKind {
         self.kind.clone()
+    }
+
+    pub fn date_string(&self) -> String {
+        match &self.kind {
+            EventKind::Singular(date) => {
+                date.format("%Y-%m-%d").to_string()
+            }
+        }
     }
 }
 

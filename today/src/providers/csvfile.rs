@@ -1,12 +1,12 @@
 use std::path::{Path, PathBuf};
 
 use chrono::NaiveDate;
-use csv::ReaderBuilder;
+use csv::{ReaderBuilder, WriterBuilder};
 
 use crate::EventProvider;
-use crate::providers::EventProviderError;
 use crate::events::{Category, Event};
 use crate::filters::EventFilter;
+use crate::providers::EventProviderError;
 
 pub struct CSVFileProvider {
     name: String,
@@ -56,10 +56,25 @@ impl EventProvider for CSVFileProvider {
     }
 
     fn is_add_supported(&self) -> bool {
-        false
+        true
     }
 
     fn add_event(&self, _event: &Event) -> Result<(), EventProviderError> {
-        Err(EventProviderError::OperationNotSupported)
+        if !self.is_add_supported() {
+            return Err(EventProviderError::OperationNotSupported);
+        }
+        
+        let mut writer = WriterBuilder::new()
+            .has_headers(false)
+            .from_path(self.path.clone())
+            .map_err(|_| EventProviderError::OperationFailed)?;
+
+        let date = _event.date_string();
+        let description = _event.description();
+        let category = _event.category().to_string();
+
+        writer.write_record(&[date, description, category]).map_err(|_| EventProviderError::OperationFailed)?;
+        writer.flush().map_err(|_| EventProviderError::OperationFailed)?;
+        Ok(())
     }
 }

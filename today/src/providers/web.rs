@@ -1,11 +1,11 @@
+use chrono::NaiveDate;
 use reqwest::{blocking::Client, blocking::Response};
 use serde::Deserialize;
-use chrono::NaiveDate;
 
 use crate::EventProvider;
-use crate::providers::EventProviderError;
 use crate::events::{Category, Event};
 use crate::filters::EventFilter;
+use crate::providers::EventProviderError;
 
 #[derive(Deserialize, Debug)]
 struct JSONEvent {
@@ -67,6 +67,9 @@ impl EventProvider for WebProvider {
     }
 
     fn add_event(&self, _event: &Event) -> Result<(), EventProviderError> {
-        Err(EventProviderError::OperationNotSupported)
+        if !self.is_add_supported() {
+            return Err(EventProviderError::OperationNotSupported);
+        }
+        Ok(())
     }
 }
