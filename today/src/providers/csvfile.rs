@@ -27,18 +27,24 @@ impl EventProvider for CSVFileProvider {
         self.name.clone()
     }
 
-    fn get_events(&self, filter: &EventFilter, events: &mut Vec<Event>) {
+    fn get_events(&self, filter: &EventFilter, events: &mut Vec<Event>) -> Result<(), EventProviderError> {
         let mut reader = ReaderBuilder::new()
             .has_headers(false)
             .from_path(self.path.clone())
-            .expect("existing CSV file");
+            .map_err(|error| EventProviderError::Io(format!("{}", error)))?;
 
         for result in reader.records() {
-            let record = result.unwrap();
+            let record = match result {
+                Ok(record) => record,
+                Err(error) => {
+                    eprintln!("CSV record read error for '{}': {}", self.name, error);
+                    continue;
+                }
+            };
 
-            let date_string = record[0].to_string();
-            let description = record[1].to_string();
-            let category_string = record[2].to_string();
+            let date_string = record.get(0).unwrap_or("").to_string();
+            let description = record.get(1).unwrap_or("").to_string();
+            let category_string = record.get(2).unwrap_or("").to_string();
 
             match NaiveDate::parse_from_str(&date_string, "%F") {
                 Ok(date) => {
@@ -53,6 +59,8 @@ impl EventProvider for CSVFileProvider {
                 }
             }
         }
+
+        Ok(())
     }
 
     fn is_add_supported(&self) -> bool {
@@ -67,14 +75,18 @@ impl EventProvider for CSVFileProvider {
         let mut writer = WriterBuilder::new()
             .has_headers(false)
             .from_path(self.path.clone())
-            .map_err(|_| EventProviderError::OperationFailed)?;
+            .map_err(|error| EventProviderError::OperationFailed(format!("{}", error)))?;
 
         let date = _event.date_string();
         let description = _event.description();
         let category = _event.category().to_string();
 
-        writer.write_record(&[date, description, category]).map_err(|_| EventProviderError::OperationFailed)?;
-        writer.flush().map_err(|_| EventProviderError::OperationFailed)?;
+        writer
+            .write_record(&[date, description, category])
+            .map_err(|error| EventProviderError::OperationFailed(format!("{}", error)))?;
+        writer
+            .flush()
+            .map_err(|error| EventProviderError::OperationFailed(format!("{}", error)))?;
         Ok(())
     }
 }

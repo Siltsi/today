@@ -1,5 +1,5 @@
 use chrono::NaiveDate;
-use reqwest::{blocking::Client, blocking::Response};
+use reqwest::blocking::Client;
 use serde::Deserialize;
 
 use crate::EventProvider;
@@ -32,34 +32,38 @@ impl EventProvider for WebProvider {
     fn name(&self) -> String {
         self.name.clone()
     }
-    fn get_events(&self, filter: &EventFilter, events: &mut Vec<Event>) {
-        // We need a date parameter for the URL, so if the filter
-        // does not specify it, we are done.
-        if filter.month_day().is_none() {
-            eprintln!("No month-day in filter");
-            return;
-        }
-        let month_day = filter.month_day().unwrap();
+    fn get_events(&self, filter: &EventFilter, events: &mut Vec<Event>) -> Result<(), EventProviderError> {
+        let month_day = match filter.month_day() {
+            Some(month_day) => month_day,
+            None => return Err(EventProviderError::Parse("missing month-day filter".to_string())),
+        };
         let date_parameter = format!("date={:02}-{:02}", month_day.month(), month_day.day());
         let url = format!("{}?{}", &self.url, date_parameter);
         let client = Client::new();
-        let request = client.get(&url).send();
-        let response: Response;
-        if request.is_err() {
-            eprintln!("Error while retrieving data: {:#?}", request.err());
-            return;
-        } else {
-            response = request.ok().unwrap();
-        }
-        let json_events = response.json::<Vec<JSONEvent>>().unwrap();
+        let response = client
+            .get(&url)
+            .send()
+            .map_err(|error| EventProviderError::Http(format!("{}", error)))?;
+
+        let json_events = response
+            .json::<Vec<JSONEvent>>()
+            .map_err(|error| EventProviderError::Http(format!("{}", error)))?;
         for json_event in json_events {
-            let date = NaiveDate::parse_from_str(&json_event.date, "%F").unwrap();
+            let date = match NaiveDate::parse_from_str(&json_event.date, "%F") {
+                Ok(date) => date,
+                Err(error) => {
+                    eprintln!("Invalid date in web payload: {}", error);
+                    continue;
+                }
+            };
             let category = Category::from_str(&json_event.category);
             let event = Event::new_singular(date, json_event.description, category);
             if filter.accepts(&event) {
                 events.push(event);
             }
         }
+
+        Ok(())
     }
 
     fn is_add_supported(&self) -> bool {

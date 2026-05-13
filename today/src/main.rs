@@ -121,7 +121,6 @@ fn main() {
         }
     };
     let toml_path = config_path.join(format!("{}.toml", APP_NAME));
-    println!("Looking for configuration file '{}'", &toml_path.display());
     let config_str = match fs::read_to_string(toml_path) {
         Ok(config_str) => config_str,
         Err(error) => {
@@ -158,11 +157,20 @@ fn main() {
             description,
             category,
         }) => {
-            let date = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").unwrap();
+            let date = match chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d") {
+                Ok(date) => date,
+                Err(error) => {
+                    eprintln!("Invalid date format: {}", error);
+                    return;
+                }
+            };
             let category = Category::from_str(&category);
             let event = Event::new_singular(date, description, category);
 
-            add_event(&config, &config_path, &provider, &event);
+            if let Err(error) = add_event(&config, &config_path, &provider, &event) {
+                eprintln!("Unable to add event: {}", error);
+                return;
+            }
         }
         _ => {
             if let Err(e) = run(&config, &config_path, &filter) {

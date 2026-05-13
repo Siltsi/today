@@ -49,7 +49,7 @@ fn make_text_part(filter: &EventFilter) -> String {
 fn make_where_clause(
     filter: &EventFilter,
     category_map: &HashMap<i64, Category>,
-) -> Result<String, ()> {
+) -> Result<String, EventProviderError> {
     let mut parts: Vec<String> = Vec::new();
 
     if filter.contains_month_day() {
@@ -58,10 +58,10 @@ fn make_where_clause(
 
     if filter.contains_category() {
         let category_part = make_category_part(filter, category_map);
-        if category_part != "" {
+        if !category_part.is_empty() {
             parts.push(category_part);
         } else {
-            return Err(());
+            return Ok("WHERE 0".to_string());
         }
     }
 
@@ -69,7 +69,7 @@ fn make_where_clause(
         parts.push(make_text_part(filter));
     }
 
-    let mut result = "".to_string();
+    let mut result = String::new();
     if !parts.is_empty() {
         result.push_str("WHERE ");
         result.push_str(&parts.join(" AND "));
@@ -105,16 +105,23 @@ impl SQLiteProvider {
         }
     }
 
-    fn get_categories(&self, connection: &Connection) -> HashMap<i64, Category> {
+    fn get_categories(&self, connection: &Connection) -> Result<HashMap<i64, Category>, EventProviderError> {
         let mut category_map: HashMap<i64, Category> = HashMap::new();
         let category_query = "SELECT category_id, primary_name, secondary_name FROM category";
-        let mut statement = connection.prepare(category_query).unwrap();
+        let mut statement = connection
+            .prepare(category_query)
+            .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
+
         while let Ok(State::Row) = statement.next() {
-            let category_id = statement.read::<i64, _>("category_id").unwrap();
-            let primary = statement.read::<String, _>("primary_name").unwrap();
+            let category_id = statement
+                .read::<i64, _>("category_id")
+                .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
+            let primary = statement
+                .read::<String, _>("primary_name")
+                .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
             let secondary = statement
                 .read::<Option<String>, _>("secondary_name")
-                .unwrap();
+                .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
 
             let category = match secondary {
                 Some(sec) => Category::new(&primary, &sec),
@@ -123,7 +130,7 @@ impl SQLiteProvider {
             category_map.insert(category_id, category);
         }
 
-        category_map
+        Ok(category_map)
     }
 }
 
@@ -132,34 +139,50 @@ impl EventProvider for SQLiteProvider {
         self.name.clone()
     }
 
-    fn get_events(&self, filter: &EventFilter, events: &mut Vec<Event>) {
-        let connection = Connection::open(self.path.clone()).unwrap();
-        let category_map = self.get_categories(&connection);
+    fn get_events(&self, filter: &EventFilter, events: &mut Vec<Event>) -> Result<(), EventProviderError> {
+        let connection = Connection::open(self.path.clone())
+            .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
+        let category_map = self.get_categories(&connection)?;
 
-        let where_clause = match make_where_clause(filter, &category_map) {
-            Ok(wc) => wc,
-            Err(_) => {
-                return;
-            }
-        };
+        let where_clause = make_where_clause(filter, &category_map)?;
         let mut event_query: String =
             "SELECT event_date, event_description, category_id FROM event".to_string();
-        event_query.push(' '); // space between table name and WHERE clause
-        event_query.push_str(&where_clause);
+        if !where_clause.is_empty() {
+            event_query.push(' ');
+            event_query.push_str(&where_clause);
+        }
 
-        let mut statement = connection.prepare(event_query).unwrap();
+        let mut statement = connection
+            .prepare(event_query)
+            .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
         while let Ok(State::Row) = statement.next() {
-            let date_string = statement.read::<String, _>("event_date").unwrap();
-            let date = NaiveDate::parse_from_str(&date_string, "%F").unwrap();
-            let description = statement.read::<String, _>("event_description").unwrap();
-            let category_id = statement.read::<i64, _>("category_id").unwrap();
-            let category = category_map.get(&category_id).unwrap();
+            let date_string = statement
+                .read::<String, _>("event_date")
+                .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
+            let date = match NaiveDate::parse_from_str(&date_string, "%F") {
+                Ok(date) => date,
+                Err(error) => {
+                    eprintln!("Invalid date in SQLite row: {}", error);
+                    continue;
+                }
+            };
+            let description = statement
+                .read::<String, _>("event_description")
+                .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
+            let category_id = statement
+                .read::<i64, _>("category_id")
+                .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
+            let category = category_map.get(&category_id).ok_or_else(|| {
+                EventProviderError::Db(format!("missing category id {}", category_id))
+            })?;
             events.push(Event::new_singular(
                 date,
                 description.to_string(),
                 category.clone(),
             ));
         }
+
+        Ok(())
     }
 
     fn is_add_supported(&self) -> bool {
@@ -170,8 +193,9 @@ impl EventProvider for SQLiteProvider {
         if !self.is_add_supported() {
             return Err(EventProviderError::OperationNotSupported);
         }
-        let connection = Connection::open(self.path.clone()).unwrap();
-        let category_map = self.get_categories(&connection);
+        let connection = Connection::open(self.path.clone())
+            .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
+        let category_map = self.get_categories(&connection)?;
         let category = _event.category();
 
         let mut category_id: i64 = 0;
@@ -190,9 +214,15 @@ impl EventProvider for SQLiteProvider {
                 primary, secondary
             );
 
-            let mut statement = connection.prepare(&query).unwrap();
-            statement.next().unwrap();
-            category_id = statement.read::<i64, _>("category_id").unwrap();
+            let mut statement = connection
+                .prepare(&query)
+                .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
+            statement
+                .next()
+                .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
+            category_id = statement
+                .read::<i64, _>("category_id")
+                .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
         }
 
         let date = _event.date_string();
@@ -203,7 +233,9 @@ impl EventProvider for SQLiteProvider {
             date, description, category_id
         );
 
-        connection.execute(query).unwrap();
+        connection
+            .execute(query)
+            .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
         Ok(())
     }
 }

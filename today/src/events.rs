@@ -20,12 +20,26 @@ impl MonthDay {
     pub fn new(month: u32, day: u32) -> Self {
         Self { month, day }
     }
-    pub fn from_str(s: &str) -> Self {
-        assert!(s.len() == 4);
-        let month_string = &s[..2];
-        let month = month_string.parse().unwrap();
-        let day: u32 = s[2..].parse().unwrap();
-        MonthDay { month, day }
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        if s.len() != 4 {
+            return Err("MonthDay string must be exactly 4 characters in MMDD format".to_string());
+        }
+
+        let month = s[..2]
+            .parse::<u32>()
+            .map_err(|_| "Invalid month".to_string())?;
+        if month == 0 || month > 12 {
+            return Err("Invalid month".to_string());
+        }
+
+        let day = s[2..]
+            .parse::<u32>()
+            .map_err(|_| "Invalid day".to_string())?;
+        if day == 0 || day > days_in_month(month) {
+            return Err("Invalid day".to_string());
+        }
+
+        Ok(MonthDay { month, day })
     }
     pub fn from_str_split(s: &str) -> Result<Self, String> {
         let parts: Vec<&str> = s.split('-').collect();

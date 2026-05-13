@@ -33,8 +33,9 @@ impl EventProvider for TextFileProvider {
         self.name.clone()
     }
 
-    fn get_events(&self, filter: &EventFilter, events: &mut Vec<Event>) {
-        let f = File::open(self.path.clone()).expect("path to text file");
+    fn get_events(&self, filter: &EventFilter, events: &mut Vec<Event>) -> Result<(), EventProviderError> {
+        let f = File::open(self.path.clone())
+            .map_err(|error| EventProviderError::Io(format!("{}", error)))?;
         let reader = BufReader::new(f);
         let mut state = ReadingState::Date;
         let mut date_string = String::new();
@@ -42,7 +43,8 @@ impl EventProvider for TextFileProvider {
         let mut category_string = String::new();
 
         for line_result in reader.lines() {
-            let line = line_result.expect("read line");
+            let line = line_result
+                .map_err(|error| EventProviderError::Io(format!("{}", error)))?;
             match state {
                 ReadingState::Date => {
                     date_string = line;
@@ -73,6 +75,8 @@ impl EventProvider for TextFileProvider {
                 }
             }
         }
+
+        Ok(())
     }
 
     fn is_add_supported(&self) -> bool {
@@ -86,14 +90,18 @@ impl EventProvider for TextFileProvider {
         let file = OpenOptions::new()
             .append(true)
             .open(self.path.clone())
-            .map_err(|_| EventProviderError::OperationFailed)?;
+            .map_err(|error| EventProviderError::OperationFailed(format!("{}", error)))?;
         let mut writer = BufWriter::new(file);
         return match event.kind() {
             EventKind::Singular(date) => {
-                writeln!(writer, "{date}").map_err(|_| EventProviderError::OperationFailed)?;
-                writeln!(writer, "{}", event.description()).map_err(|_| EventProviderError::OperationFailed)?;
-                writeln!(writer, "{}", event.category()).map_err(|_| EventProviderError::OperationFailed)?;
-                writeln!(writer).map_err(|_| EventProviderError::OperationFailed)?;
+                writeln!(writer, "{date}")
+                    .map_err(|error| EventProviderError::OperationFailed(format!("{}", error)))?;
+                writeln!(writer, "{}", event.description())
+                    .map_err(|error| EventProviderError::OperationFailed(format!("{}", error)))?;
+                writeln!(writer, "{}", event.category())
+                    .map_err(|error| EventProviderError::OperationFailed(format!("{}", error)))?;
+                writeln!(writer)
+                    .map_err(|error| EventProviderError::OperationFailed(format!("{}", error)))?;
                 Ok(())
             }
         };

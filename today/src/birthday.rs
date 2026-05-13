@@ -4,12 +4,10 @@ use std::env;
 
 pub fn handle_birthday() {
     const NAME: &str = "BIRTHDATE";
-    let value = env::var(NAME);
-    if !value.is_ok() {
-        return;
-    }
-
-    let value = value.unwrap();
+    let value = match env::var(NAME) {
+        Ok(value) => value,
+        Err(_) => return,
+    };
 
     match NaiveDate::parse_from_str(&value, "%F") {
         Ok(birthdate) => {
