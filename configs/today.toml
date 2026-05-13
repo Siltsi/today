@@ -17,3 +17,8 @@ resource = "history.txt"
 name = "events-db"
 kind = "sqlite"
 resource = "events.db"
+
+[[providers]]
+name = "todayserver"
+kind = "web"
+resource = "https://todayserver-89bb2a1b2e80.herokuapp.com/api/v1/events"
