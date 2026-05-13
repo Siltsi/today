@@ -7,6 +7,7 @@ pub enum FilterOption {
     MonthDay(MonthDay),
     Category(Category),
     Text(String),
+    Exclude(Category),
 }
 
 #[derive(Debug, PartialEq)]
@@ -40,6 +41,9 @@ impl EventFilter {
                 },
                 FilterOption::Text(text) => {
                     event.description().contains(text)
+                },
+                FilterOption::Exclude(category) => {
+                    *category != event.category()
                 },
             };
             results.push(result);
@@ -153,6 +157,11 @@ impl FilterBuilder {
         } else {
             self.options.insert(FilterOption::Text(text));
         }
+        self
+    }
+
+    pub fn exclude(mut self, category: Category) -> FilterBuilder {
+        self.options.insert(FilterOption::Exclude(category));
         self
     }
 

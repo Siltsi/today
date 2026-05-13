@@ -70,6 +70,3 @@ space/nasa
 Space Shuttle STS-45 (Atlantis 11) lands at the Kennedy Space Center
 space/nasa
 
-
-
-

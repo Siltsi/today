@@ -176,3 +176,12 @@ impl fmt::Display for Event {
         )
     }
 }
+
+pub fn parse_excludes(excludes: &str) -> Vec<Category> {
+    let mut categories: Vec<Category> = Vec::new();
+    let parts: Vec<&str> = excludes.split(",").collect();
+    for part in parts {
+        categories.push(Category::from_str(part));
+    }
+    categories
+}

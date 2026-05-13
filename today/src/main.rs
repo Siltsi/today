@@ -6,11 +6,11 @@ use today::events::Category;
 use chrono::{Datelike, Local};
 use clap::{Parser, Subcommand};
 
+use today::events::{Event, parse_excludes};
 use today::filters::{EventFilter, FilterBuilder};
 use today::{
     Config, add_event, birthday::handle_birthday, create_providers, events::MonthDay, run,
 };
-use today::events::Event;
 
 #[derive(Subcommand, Debug, Clone)]
 enum Command {
@@ -48,7 +48,7 @@ struct Args {
     #[arg(short, long, help = "No age calculation or birthday message")]
     no_birthday: bool,
 
-    #[arg(short, long, help = "Categories in <primary>/<secondary> format")]
+    #[arg(short, long, help = "Category of event. Format: primary[/secondary]")]
     category: Option<String>,
 
     #[arg(short, long, help = "A string to search for")]
@@ -102,6 +102,13 @@ fn main() {
 
     if let Some(txt) = args.text {
         builder = builder.text(txt);
+    }
+
+    if let Some(excludes) = args.exclude {
+        let categories = parse_excludes(&excludes);
+        for category in categories {
+            builder = builder.exclude(category);
+        }
     }
 
     let filter: EventFilter = builder.build();
