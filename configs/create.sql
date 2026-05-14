@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS event(
     -- alias for auto-incrementing ROWID (see https://www.sqlite.org/autoinc.html)
     event_id INTEGER PRIMARY KEY,
 
-    event_date DATE NOT NULL,
+    event_date TEXT NOT NULL,
     event_description TEXT NOT NULL,
     category_id INTEGER NOT NULL,
 

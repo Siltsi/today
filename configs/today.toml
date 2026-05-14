@@ -1,22 +1,22 @@
 [[providers]]
-name = "compsci"
+name = "space"
+kind = "text"
+resource = "space.txt"
+
+[[providers]]
+name = "film"
 kind = "csv"
-resource = "compsci.csv"
+resource = "film.csv"
 
 [[providers]]
-name = "programming"
-kind = "text"
-resource = "programming.txt"
-
-[[providers]]
-name = "history"
-kind = "text"
-resource = "history.txt"
-
-[[providers]]
-name = "events-db"
+name = "deaths"
 kind = "sqlite"
-resource = "events.db"
+resource = "deaths.db"
+
+[[providers]]
+name = "annual"
+kind = "text"
+resource = "annual.txt"
 
 [[providers]]
 name = "todayserver"

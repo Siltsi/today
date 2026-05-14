@@ -1,10 +1,11 @@
 use std::path::{Path, PathBuf};
+use std::fs::OpenOptions;
 
-use chrono::NaiveDate;
+use chrono::{Datelike, Local, NaiveDate};
 use csv::{ReaderBuilder, WriterBuilder};
 
 use crate::EventProvider;
-use crate::events::{Category, Event};
+use crate::events::{Category, Event, MonthDay, Rule};
 use crate::filters::EventFilter;
 use crate::providers::EventProviderError;
 
@@ -27,7 +28,11 @@ impl EventProvider for CSVFileProvider {
         self.name.clone()
     }
 
-    fn get_events(&self, filter: &EventFilter, events: &mut Vec<Event>) -> Result<(), EventProviderError> {
+    fn get_events(
+        &self,
+        filter: &EventFilter,
+        events: &mut Vec<Event>,
+    ) -> Result<(), EventProviderError> {
         let mut reader = ReaderBuilder::new()
             .has_headers(false)
             .from_path(self.path.clone())
@@ -42,21 +47,41 @@ impl EventProvider for CSVFileProvider {
                 }
             };
 
-            let date_string = record.get(0).unwrap_or("").to_string();
+            let mut date_string = record.get(0).unwrap_or("").to_string();
             let description = record.get(1).unwrap_or("").to_string();
             let category_string = record.get(2).unwrap_or("").to_string();
 
-            match NaiveDate::parse_from_str(&date_string, "%F") {
-                Ok(date) => {
-                    let category = Category::from_str(&category_string);
-                    let event = Event::new_singular(date, description.clone(), category);
-                    if filter.accepts(&event) {
-                        events.push(event);
-                    }
+            let is_yearless = date_string.starts_with("--");
+            if is_yearless {
+                let today: NaiveDate = Local::now().date_naive();
+                let year_string = format!("{:04}-", today.year());
+                date_string = date_string.replace("--", &year_string);
+            }
+
+            let event: Event;
+
+            if let Ok(date) = NaiveDate::parse_from_str(&date_string, "%F") {
+                let category = Category::from_str(&category_string);
+                if is_yearless {
+                    event = Event::new_annual(
+                        MonthDay::new(date.month(), date.day()),
+                        description.clone(),
+                        category,
+                    );
+                } else {
+                    event = Event::new_singular(date, description.clone(), category);
                 }
-                Err(_) => {
-                    eprintln!("Invalid date '{}'", date_string);
+                if filter.accepts(&event) {
+                    events.push(event);
                 }
+            } else if let Some(rule) = Rule::parse(&date_string) {
+                let category = Category::from_str(&category_string);
+                event = Event::new_rule_based(rule, description.clone(), category);
+                if filter.accepts(&event) {
+                    events.push(event);
+                }
+            } else {
+                eprintln!("Invalid date '{}'", date_string);
             }
         }
 
@@ -71,11 +96,16 @@ impl EventProvider for CSVFileProvider {
         if !self.is_add_supported() {
             return Err(EventProviderError::OperationNotSupported);
         }
-        
+
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+            .map_err(|error| EventProviderError::OperationFailed(format!("{}", error)))?;
+
         let mut writer = WriterBuilder::new()
             .has_headers(false)
-            .from_path(self.path.clone())
-            .map_err(|error| EventProviderError::OperationFailed(format!("{}", error)))?;
+            .from_writer(file);
 
         let date = _event.date_string();
         let description = _event.description();

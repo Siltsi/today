@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use chrono::NaiveDate;
+use chrono::{Datelike, Local, NaiveDate};
 use sqlite::{Connection, State};
 
 use crate::EventProvider;
-use crate::events::{Category, Event};
+use crate::events::{Category, Event, MonthDay, Rule};
 use crate::filters::EventFilter;
 use crate::providers::EventProviderError;
 
+#[allow(dead_code)]
 fn make_date_part(filter: &EventFilter) -> String {
     if let Some(month_day) = filter.month_day() {
         let md = format!("{:02}-{:02}", month_day.month(), month_day.day());
@@ -52,9 +53,9 @@ fn make_where_clause(
 ) -> Result<String, EventProviderError> {
     let mut parts: Vec<String> = Vec::new();
 
-    if filter.contains_month_day() {
+    /*if filter.contains_month_day() {
         parts.push(make_date_part(filter));
-    }
+    }*/
 
     if filter.contains_category() {
         let category_part = make_category_part(filter, category_map);
@@ -105,7 +106,10 @@ impl SQLiteProvider {
         }
     }
 
-    fn get_categories(&self, connection: &Connection) -> Result<HashMap<i64, Category>, EventProviderError> {
+    fn get_categories(
+        &self,
+        connection: &Connection,
+    ) -> Result<HashMap<i64, Category>, EventProviderError> {
         let mut category_map: HashMap<i64, Category> = HashMap::new();
         let category_query = "SELECT category_id, primary_name, secondary_name FROM category";
         let mut statement = connection
@@ -139,7 +143,11 @@ impl EventProvider for SQLiteProvider {
         self.name.clone()
     }
 
-    fn get_events(&self, filter: &EventFilter, events: &mut Vec<Event>) -> Result<(), EventProviderError> {
+    fn get_events(
+        &self,
+        filter: &EventFilter,
+        events: &mut Vec<Event>,
+    ) -> Result<(), EventProviderError> {
         let connection = Connection::open(self.path.clone())
             .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
         let category_map = self.get_categories(&connection)?;
@@ -156,16 +164,9 @@ impl EventProvider for SQLiteProvider {
             .prepare(event_query)
             .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
         while let Ok(State::Row) = statement.next() {
-            let date_string = statement
+            let mut date_string = statement
                 .read::<String, _>("event_date")
                 .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
-            let date = match NaiveDate::parse_from_str(&date_string, "%F") {
-                Ok(date) => date,
-                Err(error) => {
-                    eprintln!("Invalid date in SQLite row: {}", error);
-                    continue;
-                }
-            };
             let description = statement
                 .read::<String, _>("event_description")
                 .map_err(|error| EventProviderError::Db(format!("{}", error)))?;
@@ -175,11 +176,37 @@ impl EventProvider for SQLiteProvider {
             let category = category_map.get(&category_id).ok_or_else(|| {
                 EventProviderError::Db(format!("missing category id {}", category_id))
             })?;
-            events.push(Event::new_singular(
-                date,
-                description.to_string(),
-                category.clone(),
-            ));
+
+            let is_yearless = date_string.starts_with("--");
+            if is_yearless {
+                let today: NaiveDate = Local::now().date_naive();
+                let year_string = format!("{:04}-", today.year());
+                date_string = date_string.replace("--", &year_string);
+            }
+
+            let event: Event;
+
+            if let Ok(date) = NaiveDate::parse_from_str(&date_string, "%F") {
+                if is_yearless {
+                    event = Event::new_annual(
+                        MonthDay::new(date.month(), date.day()),
+                        description.clone(),
+                        category.clone(),
+                    );
+                } else {
+                    event = Event::new_singular(date, description.clone(), category.clone());
+                }
+                if filter.accepts(&event) {
+                    events.push(event);
+                }
+            } else if let Some(rule) = Rule::parse(&date_string) {
+                event = Event::new_rule_based(rule, description.clone(), category.clone());
+                if filter.accepts(&event) {
+                    events.push(event);
+                }
+            } else {
+                eprintln!("Invalid date in SQLite row: {}", date_string);
+            }
         }
 
         Ok(())
@@ -201,18 +228,23 @@ impl EventProvider for SQLiteProvider {
         let mut category_id: i64 = 0;
         if !category_exists(&category_map, &category, &mut category_id) {
             let primary = category.primary();
-            let mut secondary = category.secondary().to_string();
+            let secondary = category.secondary().to_string();
 
-            if secondary.is_empty() {
-                secondary = "NULL".to_string();
-            }
-
-            let query = format!(
-                "INSERT INTO category (primary_name, secondary_name)
-                VALUES ('{}', '{}')
-                RETURNING category_id",
-                primary, secondary
-            );
+            let query = if secondary.is_empty() {
+                format!(
+                    "INSERT INTO category (primary_name, secondary_name)
+                    VALUES ('{}', NULL)
+                    RETURNING category_id",
+                    primary
+                )
+            } else {
+                format!(
+                    "INSERT INTO category (primary_name, secondary_name)
+                    VALUES ('{}', '{}')
+                    RETURNING category_id",
+                    primary, secondary
+                )
+            };
 
             let mut statement = connection
                 .prepare(&query)

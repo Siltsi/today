@@ -6,7 +6,7 @@ use today::events::Category;
 use chrono::{Datelike, Local};
 use clap::{Parser, Subcommand};
 
-use today::events::{Event, parse_excludes};
+use today::events::{parse_excludes, params_to_event};
 use today::filters::{EventFilter, FilterBuilder};
 use today::{
     Config, add_event, birthday::handle_birthday, create_providers, events::MonthDay, run,
@@ -22,7 +22,7 @@ enum Command {
         #[arg(short, long, help = "Name of event provider")]
         provider: String,
 
-        #[arg(short, long, help = "Date of event. Format: YYYY-MM-DD")]
+        #[arg(short, long, help = "Date of event. Formats: YYYY-MM-DD (singular), --MM-DD (annual), or n th weekday in month (rule based)")]
         date: String,
 
         #[arg(short = 'e', long, help = "Description of event")]
@@ -136,10 +136,6 @@ fn main() {
         }
     };
 
-    if !args.no_birthday {
-        handle_birthday();
-    }
-
     match args.cmd {
         Some(Command::Providers) => {
             let providers = create_providers(&config, &config_path);
@@ -157,15 +153,13 @@ fn main() {
             description,
             category,
         }) => {
-            let date = match chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d") {
-                Ok(date) => date,
-                Err(error) => {
-                    eprintln!("Invalid date format: {}", error);
+            let event = match params_to_event(&date, &description, &category) {
+                Ok(event) => event,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
                     return;
                 }
             };
-            let category = Category::from_str(&category);
-            let event = Event::new_singular(date, description, category);
 
             if let Err(error) = add_event(&config, &config_path, &provider, &event) {
                 eprintln!("Unable to add event: {}", error);
@@ -173,6 +167,9 @@ fn main() {
             }
         }
         _ => {
+            if !args.no_birthday {
+                handle_birthday();
+            }
             if let Err(e) = run(&config, &config_path, &filter) {
                 eprintln!("Error running program: {}", e);
                 return;
